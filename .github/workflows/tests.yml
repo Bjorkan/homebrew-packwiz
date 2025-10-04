@@ -1,47 +1,44 @@
-name: brew test-bot
+name: CI (build on macOS + Linux)
 
 on:
   push:
-    branches:
-      - main
+    branches: ["**"]
   pull_request:
 
 jobs:
-  test-bot:
+  build:
     strategy:
+      fail-fast: false
       matrix:
-        os: [ ubuntu-22.04, macos-15-intel, macos-26 ]
+        os: [ubuntu-22.04, macos-14]
     runs-on: ${{ matrix.os }}
     permissions:
-      actions: read
-      checks: read
       contents: read
-      pull-requests: read
+    timeout-minutes: 45
+
     steps:
-      - name: Set up Homebrew
-        id: set-up-homebrew
-        uses: Homebrew/actions/setup-homebrew@main
+      - name: Checkout repository
+        uses: actions/checkout@v4
         with:
-          token: ${{ secrets.GITHUB_TOKEN }}
+          fetch-depth: 0
 
-      - name: Cache Homebrew Bundler RubyGems
-        uses: actions/cache@v4
-        with:
-          path: ${{ steps.set-up-homebrew.outputs.gems-path }}
-          key: ${{ matrix.os }}-rubygems-${{ steps.set-up-homebrew.outputs.gems-hash }}
-          restore-keys: ${{ matrix.os }}-rubygems-
+      - name: Setup Homebrew
+        uses: Homebrew/actions/setup-homebrew@master
 
-      - run: brew test-bot --only-cleanup-before
+      - name: Show brew info
+        run: |
+          brew --version
+          brew config
+          brew doctor || true
 
-      - run: brew test-bot --only-setup
+      - name: Pre-clean
+        run: brew test-bot --only-cleanup-before
 
-      - run: brew test-bot --only-tap-syntax
-      - run: brew test-bot --only-formulae
-        if: github.event_name == 'pull_request'
+      - name: Setup test-bot
+        run: brew test-bot --only-setup
 
-      - name: Upload bottles as artifact
-        if: always() && github.event_name == 'pull_request'
-        uses: actions/upload-artifact@v4
-        with:
-          name: bottles_${{ matrix.os }}
-          path: '*.bottle.*'
+      - name: Tap syntax check
+        run: brew test-bot --only-tap-syntax
+
+      - name: Build formulae
+        run: brew test-bot --only-formulae
