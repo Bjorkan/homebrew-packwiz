@@ -25,6 +25,12 @@ jobs:
       - name: Setup Homebrew
         uses: Homebrew/actions/setup-homebrew@master
 
+      - name: Reset/clean Homebrew taps on runner
+        run: |
+          brew update-reset
+          brew untap homebrew/core || true
+          brew untap homebrew/cask || true
+
       - name: Show brew info
         run: |
           brew --version
