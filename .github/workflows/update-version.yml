@@ -1,0 +1,83 @@
+name: Update Packwiz Version
+
+on:
+  workflow_dispatch:
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Fetch latest packwiz commit
+        id: fetch_commit
+        run: |
+          # Get the latest commit SHA from packwiz repository
+          COMMIT_SHA=$(git ls-remote https://github.com/packwiz/packwiz.git HEAD | awk '{print $1}')
+          echo "commit_sha=$COMMIT_SHA" >> $GITHUB_OUTPUT
+          echo "short_sha=${COMMIT_SHA:0:7}" >> $GITHUB_OUTPUT
+
+          # Fetch commit date
+          git clone --depth 1 https://github.com/packwiz/packwiz.git /tmp/packwiz
+          cd /tmp/packwiz
+          git fetch origin $COMMIT_SHA
+          git checkout $COMMIT_SHA
+          COMMIT_DATE=$(git log -1 --format="%ci" | cut -d' ' -f1 | tr '-' '.')
+          echo "commit_date=$COMMIT_DATE" >> $GITHUB_OUTPUT
+          echo "Latest commit: $COMMIT_SHA"
+          echo "Commit date: $COMMIT_DATE"
+
+      - name: Download and calculate SHA256
+        id: calculate_sha
+        run: |
+          COMMIT_SHA="${{ steps.fetch_commit.outputs.commit_sha }}"
+          URL="https://github.com/packwiz/packwiz/archive/${COMMIT_SHA}.tar.gz"
+
+          # Download the tarball
+          curl -L -o /tmp/packwiz.tar.gz "$URL"
+
+          # Calculate SHA256
+          SHA256=$(sha256sum /tmp/packwiz.tar.gz | awk '{print $1}')
+          echo "sha256=$SHA256" >> $GITHUB_OUTPUT
+          echo "SHA256: $SHA256"
+
+      - name: Update formula
+        run: |
+          COMMIT_SHA="${{ steps.fetch_commit.outputs.commit_sha }}"
+          COMMIT_DATE="${{ steps.fetch_commit.outputs.commit_date }}"
+          SHA256="${{ steps.calculate_sha.outputs.sha256 }}"
+
+          # Update the formula file
+          sed -i "s|url \".*\"|url \"https://github.com/packwiz/packwiz/archive/${COMMIT_SHA}.tar.gz\"|" Formula/packwiz.rb
+          sed -i "s|version \".*\"|version \"${COMMIT_DATE}\"|" Formula/packwiz.rb
+          sed -i "s|sha256 \".*\"|sha256 \"${SHA256}\"|" Formula/packwiz.rb
+
+          echo "Updated formula to version ${COMMIT_DATE} (commit ${COMMIT_SHA:0:7})"
+          cat Formula/packwiz.rb
+
+      - name: Create Pull Request
+        uses: peter-evans/create-pull-request@v6
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          commit-message: "Update packwiz to ${{ steps.fetch_commit.outputs.commit_date }}"
+          title: "Update packwiz to ${{ steps.fetch_commit.outputs.commit_date }}"
+          body: |
+            ## Automated Version Update
+
+            This PR updates the packwiz formula to the latest upstream version.
+
+            **Changes:**
+            - Version: `${{ steps.fetch_commit.outputs.commit_date }}`
+            - Commit: `${{ steps.fetch_commit.outputs.short_sha }}`
+            - SHA256: `${{ steps.calculate_sha.outputs.sha256 }}`
+
+            **Upstream commit:**
+            https://github.com/packwiz/packwiz/commit/${{ steps.fetch_commit.outputs.commit_sha }}
+          branch: update-packwiz-${{ steps.fetch_commit.outputs.commit_date }}
+          delete-branch: true
+
