@@ -96,19 +96,26 @@ jobs:
             echo "existing_pr=$EXISTING_PR" >> $GITHUB_OUTPUT
             # Get the current body to preserve update history
             EXISTING_BODY=$(cat /tmp/pr_list.json | jq -r '.[] | select(.headRefName == "update-packwiz") | .body')
-            # Extract just the "Previous Updates" section if it exists
-            PREV_UPDATES=$(echo "$EXISTING_BODY" | sed -n '/### Previous Updates/,$p')
-            if [ -z "$PREV_UPDATES" ]; then
-              # If no "Previous Updates" section, extract the "Latest Changes" section
-              PREV_UPDATES=$(echo "$EXISTING_BODY" | sed -n '/\*\*Latest Changes:\*\*/,/---/p' | sed '1s/Latest/Previous/')
+
+            # Use a clear marker to extract history
+            # Look for content between <!-- UPDATE_HISTORY_START --> and <!-- UPDATE_HISTORY_END -->
+            HISTORY=$(echo "$EXISTING_BODY" | awk '/<!-- UPDATE_HISTORY_START -->/,/<!-- UPDATE_HISTORY_END -->/' | grep -v 'UPDATE_HISTORY')
+
+            # If no history section exists yet, create one from current "Latest Changes"
+            if [ -z "$HISTORY" ]; then
+              CURRENT_VERSION=$(echo "$EXISTING_BODY" | grep -A 3 '\*\*Latest Changes:\*\*' | tail -n 3)
+              if [ -n "$CURRENT_VERSION" ]; then
+                HISTORY="### Previous Updates"$'\n\n'"#### Update from previous run"$'\n'"$CURRENT_VERSION"
+              fi
             fi
-            echo "previous_updates<<EOF" >> $GITHUB_OUTPUT
-            echo "$PREV_UPDATES" >> $GITHUB_OUTPUT
+
+            echo "update_history<<EOF" >> $GITHUB_OUTPUT
+            echo "$HISTORY" >> $GITHUB_OUTPUT
             echo "EOF" >> $GITHUB_OUTPUT
-            echo "Found existing PR #$EXISTING_PR"
+            echo "Found existing PR #$EXISTING_PR with history"
           else
             echo "existing_pr=" >> $GITHUB_OUTPUT
-            echo "previous_updates=" >> $GITHUB_OUTPUT
+            echo "update_history=" >> $GITHUB_OUTPUT
             echo "No existing PR found"
           fi
         env:
@@ -135,6 +142,9 @@ jobs:
             https://github.com/packwiz/packwiz/commit/${{ steps.fetch_commit.outputs.commit_sha }}
 
             ---
-            ${{ steps.get_pr.outputs.previous_updates }}
+
+            <!-- UPDATE_HISTORY_START -->
+            ${{ steps.get_pr.outputs.update_history }}
+            <!-- UPDATE_HISTORY_END -->
           branch: update-packwiz
           delete-branch: false
