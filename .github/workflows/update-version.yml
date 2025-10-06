@@ -103,9 +103,12 @@ jobs:
 
             # If no history section exists yet, create one from current "Latest Changes"
             if [ -z "$HISTORY" ]; then
-              CURRENT_VERSION=$(echo "$EXISTING_BODY" | grep -A 3 '\*\*Latest Changes:\*\*' | tail -n 3)
+              # Extract the "Latest Changes" section content more robustly
+              # Look for lines between "**Latest Changes:**" and the next section marker
+              CURRENT_VERSION=$(echo "$EXISTING_BODY" | awk '/\*\*Latest Changes:\*\*/{flag=1; next} /\*\*Upstream commit:\*\*/{flag=0} flag')
               if [ -n "$CURRENT_VERSION" ]; then
-                HISTORY="### Previous Updates"$'\n\n'"#### Update from previous run"$'\n'"$CURRENT_VERSION"
+                # Use printf for better readability and maintainability
+                HISTORY=$(printf "### Previous Updates\n\n#### Update from previous run\n%s" "$CURRENT_VERSION")
               fi
             fi
 
