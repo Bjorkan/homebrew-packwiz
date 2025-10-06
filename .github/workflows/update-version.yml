@@ -32,8 +32,31 @@ jobs:
           echo "Latest commit: $COMMIT_SHA"
           echo "Commit date: $COMMIT_DATE"
 
+      - name: Check if update is needed
+        id: check_update
+        run: |
+          # Get current version from main branch
+          git fetch origin main
+          CURRENT_VERSION=$(git show origin/main:Formula/packwiz.rb | grep -E '^\s*version' | sed 's/.*"\(.*\)".*/\1/')
+          CURRENT_SHA=$(git show origin/main:Formula/packwiz.rb | grep -E '^\s*url' | sed 's/.*archive\/\(.*\)\.tar\.gz.*/\1/')
+
+          NEW_VERSION="${{ steps.fetch_commit.outputs.commit_date }}"
+          NEW_SHA="${{ steps.fetch_commit.outputs.commit_sha }}"
+
+          echo "Current version: $CURRENT_VERSION (commit ${CURRENT_SHA:0:7})"
+          echo "New version: $NEW_VERSION (commit ${NEW_SHA:0:7})"
+
+          if [ "$CURRENT_SHA" = "$NEW_SHA" ]; then
+            echo "needs_update=false" >> $GITHUB_OUTPUT
+            echo "No update needed - already at latest version"
+          else
+            echo "needs_update=true" >> $GITHUB_OUTPUT
+            echo "Update needed"
+          fi
+
       - name: Download and calculate SHA256
         id: calculate_sha
+        if: steps.check_update.outputs.needs_update == 'true'
         run: |
           COMMIT_SHA="${{ steps.fetch_commit.outputs.commit_sha }}"
           URL="https://github.com/packwiz/packwiz/archive/${COMMIT_SHA}.tar.gz"
@@ -47,6 +70,7 @@ jobs:
           echo "SHA256: $SHA256"
 
       - name: Update formula
+        if: steps.check_update.outputs.needs_update == 'true'
         run: |
           COMMIT_SHA="${{ steps.fetch_commit.outputs.commit_sha }}"
           COMMIT_DATE="${{ steps.fetch_commit.outputs.commit_date }}"
@@ -60,7 +84,38 @@ jobs:
           echo "Updated formula to version ${COMMIT_DATE} (commit ${COMMIT_SHA:0:7})"
           cat Formula/packwiz.rb
 
-      - name: Create Pull Request
+      - name: Get existing PR info
+        if: steps.check_update.outputs.needs_update == 'true'
+        id: get_pr
+        run: |
+          # Check if there's an existing PR from this workflow
+          gh pr list --state open --json number,headRefName,title,body > /tmp/pr_list.json
+          EXISTING_PR=$(cat /tmp/pr_list.json | jq -r '.[] | select(.headRefName == "update-packwiz") | .number')
+
+          if [ -n "$EXISTING_PR" ]; then
+            echo "existing_pr=$EXISTING_PR" >> $GITHUB_OUTPUT
+            # Get the current body to preserve update history
+            EXISTING_BODY=$(cat /tmp/pr_list.json | jq -r '.[] | select(.headRefName == "update-packwiz") | .body')
+            # Extract just the "Previous Updates" section if it exists
+            PREV_UPDATES=$(echo "$EXISTING_BODY" | sed -n '/### Previous Updates/,$p')
+            if [ -z "$PREV_UPDATES" ]; then
+              # If no "Previous Updates" section, extract the "Latest Changes" section
+              PREV_UPDATES=$(echo "$EXISTING_BODY" | sed -n '/\*\*Latest Changes:\*\*/,/---/p' | sed '1s/Latest/Previous/')
+            fi
+            echo "previous_updates<<EOF" >> $GITHUB_OUTPUT
+            echo "$PREV_UPDATES" >> $GITHUB_OUTPUT
+            echo "EOF" >> $GITHUB_OUTPUT
+            echo "Found existing PR #$EXISTING_PR"
+          else
+            echo "existing_pr=" >> $GITHUB_OUTPUT
+            echo "previous_updates=" >> $GITHUB_OUTPUT
+            echo "No existing PR found"
+          fi
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Create or Update Pull Request
+        if: steps.check_update.outputs.needs_update == 'true'
         uses: peter-evans/create-pull-request@v6
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
@@ -71,13 +126,15 @@ jobs:
 
             This PR updates the packwiz formula to the latest upstream version.
 
-            **Changes:**
+            **Latest Changes:**
             - Version: `${{ steps.fetch_commit.outputs.commit_date }}`
             - Commit: `${{ steps.fetch_commit.outputs.short_sha }}`
             - SHA256: `${{ steps.calculate_sha.outputs.sha256 }}`
 
             **Upstream commit:**
             https://github.com/packwiz/packwiz/commit/${{ steps.fetch_commit.outputs.commit_sha }}
-          branch: update-packwiz-${{ steps.fetch_commit.outputs.commit_date }}
-          delete-branch: true
 
+            ---
+            ${{ steps.get_pr.outputs.previous_updates }}
+          branch: update-packwiz
+          delete-branch: false
